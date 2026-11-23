@@ -1,8 +1,12 @@
 name: Release App
 
-# Al crear una etiqueta app-vX.Y.Z, compila los instaladores de Windows y Linux
-# y los adjunta a un borrador de Release para revisarlo antes de publicarlo.
+# Al subir una etiqueta app-vX.Y.Z (o al ejecutarlo a mano desde Actions) compila los
+# instaladores de Windows y Linux, los firma para el updater y publica el Release.
 # Las etiquetas vX.Y.Z (sin "app-") siguen siendo del script de bash.
+#
+# Flujo: primero se crea un borrador único; después cada sistema compila y añade sus
+# instaladores, sus firmas y su parte de latest.json; al final se publica todo de golpe
+# para que el auto-updater no vea un Release a medias.
 on:
   push:
     tags: ["app-v*"]
@@ -11,10 +15,90 @@ on:
 permissions:
   contents: write
 
+# Un Release a la vez: dos ejecuciones sobre la misma etiqueta se pisarían.
+concurrency:
+  group: release-app
+  cancel-in-progress: false
+
 jobs:
-  release:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Crear el borrador del Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            # Ejecución manual: la etiqueta sale de la versión de tauri.conf.json
+            tag="app-v$(jq -r '.version' app/src-tauri/tauri.conf.json)"
+          fi
+          if [[ ! "$tag" =~ ^app-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Etiqueta inesperada: $tag (se esperaba app-vX.Y.Z)"
+            exit 1
+          fi
+          echo "Etiqueta: $tag"
+
+          # La API REST sí devuelve los borradores (gh release list no trae su id).
+          release_id() {
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+              --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -n1
+          }
+
+          # Un Release ya publicado no se puede volver a montar: mejor fallar aquí.
+          published=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"$tag\" and (.draft | not)) | .tag_name")
+          if [[ -n "$published" ]]; then
+            echo "::error::El Release $tag ya está publicado. Sube la versión antes de volver a lanzarlo."
+            exit 1
+          fi
+
+          # Se reutiliza el borrador si ya existe (por ejemplo, al reintentar el workflow).
+          id=$(release_id)
+          if [[ -z "$id" ]]; then
+            cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          App de escritorio Remo para Windows y Linux.
+
+          **Windows:** `Remo_*_x64-setup.exe` (recomendado) o `.msi`.
+          **Linux:** `.AppImage` (cualquier distro), `.deb` (Debian/Ubuntu) o `.rpm` (Fedora/openSUSE).
+
+          La primera vez la app descarga yt-dlp (y ffmpeg en Windows) desde sus repositorios oficiales.
+          El script de terminal se sigue instalando con `git clone` + `./install.sh`.
+          EOF
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Remo $tag" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --target "$GITHUB_SHA"
+            # Las releases en borrador no siempre se pueden consultar por etiqueta:
+            # se busca el id en la lista.
+            id=$(release_id)
+          fi
+          if [[ -z "$id" ]]; then
+            echo "::error::No se encontró ni se pudo crear el Release $tag"
+            exit 1
+          fi
+          echo "Borrador de $tag listo (id $id)"
+
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
     strategy:
       fail-fast: false
+      # De uno en uno: cada plataforma mezcla su entrada en el latest.json del borrador.
+      max-parallel: 1
       matrix:
         os: [ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -44,7 +128,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: app
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Firma de las actualizaciones (la app solo acepta actualizaciones firmadas con esta clave)
@@ -52,18 +136,44 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
-          tagName: ${{ github.ref_name }}
-          releaseName: "Remo ${{ github.ref_name }}"
-          releaseBody: |
-            App de escritorio Remo para Windows y Linux.
-
-            **Windows:** `Remo_*_x64-setup.exe` (recomendado) o `.msi`.
-            **Linux:** `.AppImage` (cualquier distro), `.deb` (Debian/Ubuntu) o `.rpm` (Fedora/openSUSE).
-
-            La primera vez la app descarga yt-dlp (y ffmpeg en Windows) desde sus repositorios oficiales.
-            El script de terminal se sigue instalando con `git clone` + `./install.sh`.
-          # Borrador: se revisa antes de publicarlo. Al publicarlo pasa a ser la "latest"
-          # y las apps instaladas encuentran la actualización en latest.json.
+          # Se adjunta al borrador creado arriba; el Release se publica en el último job.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ needs.create-release.outputs.tag_name }}
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          retryAttempts: 2
+          # latest.json del updater: cada plataforma añade su entrada sin pisar la otra.
+          uploadUpdaterJson: true
+          # La app recomienda el instalador NSIS (.exe) en Windows.
+          updaterJsonPreferNsis: true
+
+  publish-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comprobar latest.json y publicar el Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          TAG: ${{ needs.create-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          # Se descarga latest.json por id: un borrador no siempre se resuelve por etiqueta.
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '.assets[] | select(.name == "latest.json") | .id')
+          if [[ -z "$asset" ]]; then
+            echo "::error::El Release $TAG no tiene latest.json"
+            exit 1
+          fi
+          latest="$RUNNER_TEMP/latest.json"
+          gh api -H "Accept: application/octet-stream" \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$latest"
+
+          # Sin las dos plataformas no se publica: el updater quedaría incompleto.
+          jq -e '.platforms["linux-x86_64"] and .platforms["windows-x86_64"]' "$latest" > /dev/null
+          echo "latest.json incluye Linux y Windows"
+
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=true
+          echo "Publicado: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
