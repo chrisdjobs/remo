@@ -43,9 +43,6 @@ First, bump the version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml
 
 Before the first release, replace the placeholder values:
 
-- **Icons:** `src-tauri/icons/` still contains the untouched Tauri defaults. Generate the
-  full set from the Remo artwork with
-  `pnpm tauri icon path/to/remo-icon.png` (a PNG or SVG source).
 - **Updater signing key:** generate the key pair and configure it:
 
   ```bash
