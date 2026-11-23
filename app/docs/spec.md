@@ -3,7 +3,7 @@
 ## Goal
 `Remo` desktop app is a native Tauri 2 application for Windows and Linux that lets Spanish-speaking anime fans search anime, inspect episode lists, and download individual episodes or full seasons into a **Jellyfin-compatible** folder structure—without needing Git Bash, `fzf`, or manual CLI setup. It complements the root-level `remo` bash script (a fork of `ani-es`) and shares the same library folder layout so users can switch between both seamlessly.
 
-## Scope v1 (currently v1.2.0)
+## Scope v1 (currently v1.3.0)
 - **Multi-source search**: Search and paginate anime from `jkanime.net` and (optionally, disabled by default) `hentaijk.com` (+18), each with its own library folder and Jellyfin layout toggle. **YouTube** (enabled by default) is searched by text with `yt-dlp` or opened directly from a pasted video/playlist URL.
 - **Anime details & disk status**: View poster, type (`Película`, etc.), quality, episode list, and which episodes/seasons are already downloaded on disk, plus automatic season detection from series titles (e.g. `"Overlord II"` → `Overlord`, Season 2).
 - **YouTube details**: Inspect a video or a playlist (title, channel, thumbnail, duration, entries) and choose **video (MP4)** with an optional resolution cap or **audio only** (MP3/M4A); playlists can be downloaded entirely or by selection.
