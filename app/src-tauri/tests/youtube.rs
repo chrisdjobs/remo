@@ -3,8 +3,8 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use the_wired_lib::jkanime::Site;
-use the_wired_lib::youtube::{self, AudioCodec, YtFormat};
+use remo_lib::jkanime::Site;
+use remo_lib::youtube::{self, AudioCodec, YtFormat};
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(
