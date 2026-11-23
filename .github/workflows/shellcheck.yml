@@ -13,4 +13,4 @@ jobs:
       - name: Comprobar scripts
         run: |
           shellcheck --version
-          shellcheck remo install.sh uninstall.sh
+          shellcheck remo install.sh uninstall.sh scripts/release.sh

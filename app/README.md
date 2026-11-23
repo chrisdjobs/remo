@@ -37,22 +37,31 @@ The app identifier is `io.github.chrisdjobs.remo`:
 
 ## Publishing
 
-Create and push a tag `app-vX.Y.Z`; the `release-app.yml` workflow builds the Windows and
-Linux installers and attaches them to a draft Release.
-First, bump the version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
+Releases are cut from `main` with the script at the repository root. It bumps the version in
+`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`,
+runs the Rust and frontend checks, commits, creates the `app-vX.Y.Z` tag and pushes both:
 
-Before the first release, replace the placeholder values:
+```bash
+pnpm release 1.3.0                    # from app/
+./scripts/release.sh 1.3.0            # same, from the repository root
+./scripts/release.sh 1.3.0 --dry-run  # validations and checks only, nothing is written
+```
 
-- **Updater signing key:** generate the key pair and configure it:
+The tag push triggers `release-app.yml`, which creates a single draft Release, builds and signs
+the Windows and Linux installers one platform at a time, and publishes the Release once
+`latest.json` has both platforms. Installed apps then find the update through
+`https://github.com/chrisdjobs/remo/releases/latest/download/latest.json`.
 
-  ```bash
-  pnpm tauri signer generate -- -w ~/.tauri/remo.key
-  ```
+Before the first release in a fork, generate your own updater key pair:
 
-  Put the public key in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`, it currently
-  holds the placeholder `REPLACE_WITH_YOUR_TAURI_SIGNING_PUBLIC_KEY`) and add the private key
-  and its password as the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Run 'pnpm tauri signer generate -- -w ~/.tauri/remo.key' before the first release.
+```bash
+pnpm tauri signer generate -- -w ~/.tauri/remo.key
+```
+
+Put the public key in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`) and add the private
+key and its password as the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing the key or its password breaks updates for installed
+copies.
 
 ## Disclaimer
 
