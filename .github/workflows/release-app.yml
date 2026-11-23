@@ -74,15 +74,12 @@ jobs:
           La primera vez la app descarga yt-dlp (y ffmpeg en Windows) desde sus repositorios oficiales.
           El script de terminal se sigue instalando con `git clone` + `./install.sh`.
           EOF
-            gh release create "$tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft \
-              --title "Remo $tag" \
-              --notes-file "$RUNNER_TEMP/release-notes.md" \
-              --target "$GITHUB_SHA"
-            # Las releases en borrador no siempre se pueden consultar por etiqueta:
-            # se busca el id en la lista.
-            id=$(release_id)
+            # POST directo: la respuesta ya trae el id; la lista de releases tarda un
+            # instante en ver el borrador recién creado.
+            id=$(jq -n --rawfile body "$RUNNER_TEMP/release-notes.md" \
+              --arg tag "$tag" --arg name "Remo $tag" --arg target "$GITHUB_SHA" \
+              '{tag_name: $tag, name: $name, body: $body, draft: true, target_commitish: $target}' \
+              | gh api -X POST "repos/$GITHUB_REPOSITORY/releases" --input - --jq '.id')
           fi
           if [[ -z "$id" ]]; then
             echo "::error::No se encontró ni se pudo crear el Release $tag"
